@@ -131,7 +131,6 @@ fn convert_image(path: &Path, debug: bool) {
 
     let mut points: Vec<Point2<f64>> = Vec::new();
     let mut colors: Vec<VoronoiColor> = Vec::new();
-    // let mut point_positions: Vec<(u32, u32)> = Vec::new();
     let mut transparent_pixels: Vec<(u32, u32, Rgba<u8>)> = Vec::new();
     let mut position_to_index: std::collections::HashMap<(u32, u32), usize> = Default::default();
 
@@ -169,7 +168,6 @@ fn convert_image(path: &Path, debug: bool) {
                 continue;
             }
 
-            // point_positions.push((x, y));
             position_to_index.insert((x, y), points.len());
             points.push(Point2::new(x as f64, y as f64));
             colors.push(VoronoiColor { r, g, b });
@@ -177,17 +175,6 @@ fn convert_image(path: &Path, debug: bool) {
             break;
         }
     }
-
-    // for (index, point) in points.iter().enumerate() {
-    //     let color = &colors[index];
-    //     img.put_pixel(
-    //         point.x as u32,
-    //         point.y as u32,
-    //         Rgba::<u8> {
-    //             0: [color.r, color.g, color.b, 255],
-    //         },
-    //     );
-    // }
 
     if points.len() == 0 {
         println!("No transparent pixels to fix: {:?}", path);
@@ -207,17 +194,8 @@ fn convert_image(path: &Path, debug: bool) {
                 None => continue,
             };
 
-        // let closest_index = closest_neighbor.index();
-        // if closest_index == 0 {
-        //     continue;
-        // }
-
         let closest_position = closest_neighbor.position();
 
-        // if let Some((closest_index, _)) =
-        //     point_positions.iter().enumerate().find(|(_, (x1, y1))| {
-        //         *x1 == closest_position.x as u32 && *y1 == closest_position.y as u32
-        //     })
         if let Some(closest_index) =
             position_to_index.get(&(closest_position.x as u32, closest_position.y as u32))
         {
@@ -258,7 +236,7 @@ async fn main() {
     }
 
     if args.len() == 0 {
-        println!("You need to drop pngs on the exe!");
+        println!("Drop png files on the exe to fix them!");
     } else {
         let mut threads = JoinSet::new();
 
