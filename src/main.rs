@@ -8,7 +8,7 @@ use tokio::task::JoinSet;
 use image::{GenericImage, GenericImageView, Rgba};
 use spade::{DelaunayTriangulation, Point2, Triangulation};
 
-static EXTENSIONS: &[&'static str] = &["jpg", "png", "bmp", "tif"];
+static EXTENSIONS: &[&'static str] = &["png"];
 static NEIGHBORS: &[(i32, i32)] = &[
     (-1, -1),
     (0, -1),
