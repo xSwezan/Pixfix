@@ -1,6 +1,8 @@
 use std::{
     io::stdin,
     path::{Path, PathBuf},
+    sync::{atomic::AtomicU16, Arc},
+    time::Instant,
 };
 
 use tokio::task::JoinSet;
@@ -35,8 +37,9 @@ fn valid_extension(path: &Path) -> bool {
     EXTENSIONS.contains(&extension)
 }
 
-fn resolve_files(args: Vec<String>) -> Vec<PathBuf> {
+fn resolve_files(args: Vec<String>) -> (Vec<PathBuf>, u16) {
     let mut files = Vec::new();
+    let mut all_files: u16 = 0;
 
     for arg in args {
         let path = Path::new(&arg);
@@ -44,18 +47,22 @@ fn resolve_files(args: Vec<String>) -> Vec<PathBuf> {
         let metadata = match std::fs::metadata(path) {
             Ok(data) => data,
             Err(_) => {
-                println!("Ignoring image: \"{}\" as it does not exist", arg);
+                println!("Ignoring \"{}\" - It does not exist!", arg);
+
                 continue;
             }
         };
 
+        all_files += 1;
+
         if metadata.is_file() {
             if !valid_extension(path) {
                 println!(
-                    "Ignoring image: \"{}\" as only {} are accepted!",
+                    "Ignoring \"{}\" - Only {} are accepted!",
                     arg,
                     EXTENSIONS.join("|")
                 );
+
                 continue;
             }
 
@@ -69,14 +76,13 @@ fn resolve_files(args: Vec<String>) -> Vec<PathBuf> {
         let dir = match std::fs::read_dir(arg.clone()) {
             Ok(data) => data,
             Err(_) => {
-                println!(
-                    "Ignoring directory: \"{}\" as an error occured reading directory",
-                    arg
-                );
+                println!("Ignoring \"{}\" - An error occured reading directory!", arg);
 
                 continue;
             }
         };
+
+        all_files -= 1;
 
         for path in dir {
             if path.is_err() {
@@ -88,7 +94,7 @@ fn resolve_files(args: Vec<String>) -> Vec<PathBuf> {
                 Ok(data) => data,
                 Err(_) => {
                     println!(
-                        "Ignoring file: \"{}\" as an error occured reading file metadata",
+                        "Ignoring \"{}\" - An error occured reading file metadata!",
                         path.display()
                     );
 
@@ -100,23 +106,26 @@ fn resolve_files(args: Vec<String>) -> Vec<PathBuf> {
                 continue;
             }
 
+            all_files += 1;
+
             if !valid_extension(&path) {
                 println!(
-                    "Ignoring image: \"{}\" as only {} are accepted!",
+                    "Ignoring \"{}\" - Only {} are accepted!",
                     path.display(),
                     EXTENSIONS.join("|")
                 );
+
                 continue;
             }
 
-            files.push(path)
+            files.push(path);
         }
     }
 
-    files
+    (files, all_files)
 }
 
-fn convert_image(path: &Path, debug: bool) {
+fn convert_image(path: &Path, debug: bool) -> bool {
     let mut img = match image::open(path) {
         Ok(value) => value,
         Err(err) => {
@@ -125,7 +134,7 @@ fn convert_image(path: &Path, debug: bool) {
                 path.display(),
                 err
             );
-            return;
+            return false;
         }
     };
 
@@ -178,7 +187,7 @@ fn convert_image(path: &Path, debug: bool) {
 
     if points.len() == 0 {
         println!("No transparent pixels to fix: {:?}", path);
-        return;
+        return false;
     }
 
     let triangulation: DelaunayTriangulation<Point2<f64>> =
@@ -216,7 +225,19 @@ fn convert_image(path: &Path, debug: bool) {
     }
 
     img.save(path).expect("Unable to save image");
-    println!("{:?}", path.display())
+    println!("{:?}", path.display());
+
+    true
+}
+
+fn draw_watermark() {
+    println!(
+        "   ____ _____  _______ _____  __
+  |  _ \\_ _\\ \\/ /  ___|_ _\\ \\/ /
+  | |_) | | \\  /| |_   | | \\  / 
+  |  __/| | /  \\|  _|  | | /  \\ 
+  |_|  |___/_/\\_\\_|   |___/_/\\_\\\n"
+    );
 }
 
 #[tokio::main]
@@ -235,13 +256,33 @@ async fn main() {
         }
     }
 
+    let start = Instant::now();
+    let files_fixed: Arc<AtomicU16> = Arc::new(AtomicU16::new(0));
+    let files_failed: Arc<AtomicU16> = Arc::new(AtomicU16::new(0));
+
+    draw_watermark();
+
     if args.len() == 0 {
         println!("Drop png files on the exe to fix them!");
     } else {
         let mut threads = JoinSet::new();
 
-        for path in resolve_files(args) {
-            threads.spawn_blocking(move || convert_image(path.as_path(), debug));
+        let (files, all_files) = resolve_files(args);
+        let num_failed = all_files - files.len() as u16;
+        files_failed.fetch_add(num_failed, std::sync::atomic::Ordering::Relaxed);
+
+        for path in files {
+            let files_fixed_thread = files_fixed.clone();
+            let files_unfixed_thread = files_failed.clone();
+
+            threads.spawn_blocking(move || {
+                let converted = convert_image(path.as_path(), debug);
+                if converted == true {
+                    files_fixed_thread.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                } else {
+                    files_unfixed_thread.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            });
         }
 
         loop {
@@ -249,6 +290,24 @@ async fn main() {
                 break;
             }
         }
+    }
+
+    let time_taken = Instant::now()
+        .saturating_duration_since(start)
+        .as_secs_f32();
+
+    println!("");
+
+    if files_fixed.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+        println!(
+            "Successfully fixed {:?} images in {:.10} seconds!",
+            files_fixed, time_taken
+        );
+    } else {
+        println!("No files where able to be fixed!")
+    }
+    if files_failed.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+        println!("Skipped {:?} files that couldn't be fixed!", files_failed);
     }
 
     println!("\npress enter to exit");
